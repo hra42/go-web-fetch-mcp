@@ -8,7 +8,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	readability "github.com/go-shiori/go-readability"
+	readability "codeberg.org/readeck/go-readability/v2"
 
 	htmltomarkdown "github.com/JohannesKaufmann/html-to-markdown/v2"
 	"github.com/JohannesKaufmann/html-to-markdown/v2/converter"
@@ -116,12 +116,17 @@ func processHTML(body []byte, pageURL string) (content, title string, err error)
 	article, readErr := readability.FromReader(bytes.NewReader(body), parsedURL)
 
 	html := ""
-	if readErr != nil || strings.TrimSpace(article.Content) == "" {
+	if readErr != nil || article.Node == nil {
 		// Fallback to raw HTML
 		html = string(body)
 	} else {
-		title = article.Title
-		html = article.Content
+		title = article.Title()
+		var buf bytes.Buffer
+		if err := article.RenderHTML(&buf); err != nil {
+			html = string(body)
+		} else {
+			html = buf.String()
+		}
 	}
 
 	md, err := htmltomarkdown.ConvertString(html, converter.WithDomain(pageURL))
