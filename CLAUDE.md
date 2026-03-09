@@ -44,7 +44,7 @@ internal/config/config.go         — Config struct and defaults
 ## Key Patterns
 
 - All library code in `internal/` — not importable externally
-- Module: `github.com/hra42/go-web-fetch-mcp`, Go 1.25.5
+- Module: `github.com/hra42/go-web-fetch-mcp`, Go 1.26.0
 - `server.RobotsChecker` is an interface; tests use a mock implementation
 - Tests use `httptest.NewServer` for integration-style testing against real HTTP handlers
 - `processor.paginate` works on byte offsets and snaps to UTF-8 rune boundaries
