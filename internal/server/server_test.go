@@ -242,7 +242,7 @@ func TestHTTPHandlerHealthz(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get /healthz: %v", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 	if resp.StatusCode != http.StatusOK {
 		t.Errorf("/healthz status = %d, want 200", resp.StatusCode)
 	}
@@ -306,7 +306,7 @@ func TestHTTPHandlerBearerAuth(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Do: %v", err)
 			}
-			defer resp.Body.Close()
+			defer func() { _ = resp.Body.Close() }()
 
 			if tt.wantStatus == http.StatusUnauthorized {
 				if resp.StatusCode != http.StatusUnauthorized {
