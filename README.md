@@ -28,7 +28,10 @@ go build -o bin/web-fetch-mcp ./cmd/web-fetch-mcp
 
 ## Usage
 
-The server communicates over stdio using JSON-RPC (MCP protocol). It is designed to be launched by an MCP client such as Claude Desktop.
+The server supports two transports:
+
+- **stdio** (default) — launched as a subprocess by an MCP client (e.g. Claude Desktop) and speaks JSON-RPC over stdin/stdout.
+- **http** — listens for the [streamable HTTP](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports#streamable-http) MCP transport, suitable for self-hosting one shared instance behind a network endpoint. Requires a Bearer token.
 
 ```bash
 web-fetch-mcp [flags]
@@ -41,6 +44,23 @@ web-fetch-mcp [flags]
 | `--user-agent` | `ModelContextProtocol/1.0 (Autonomous; ...)` | User-Agent header for HTTP requests |
 | `--ignore-robots-txt` | `false` | Skip robots.txt compliance checks |
 | `--proxy-url` | _(none)_ | HTTP/HTTPS proxy URL |
+| `--transport` | `stdio` | MCP transport: `stdio` or `http` |
+| `--listen` | `:8080` | Bind address for `http` transport |
+
+### Environment
+
+| Variable | Required when | Description |
+|----------|---------------|-------------|
+| `WEB_FETCH_MCP_TOKEN` | `--transport=http` | Bearer token clients must send via `Authorization: Bearer <token>` |
+
+### Remote (HTTP) Mode
+
+```bash
+export WEB_FETCH_MCP_TOKEN=$(openssl rand -hex 32)
+web-fetch-mcp --transport=http --listen=:8080
+```
+
+Clients must include `Authorization: Bearer $WEB_FETCH_MCP_TOKEN` on every request; missing or wrong tokens return `401 Unauthorized`. For Claude Desktop or other clients that only speak stdio, bridge with [`mcp-remote`](https://www.npmjs.com/package/mcp-remote) pointing at the endpoint.
 
 ### Claude Desktop Configuration
 
@@ -110,6 +130,52 @@ make clean
 docker build -t web-fetch-mcp .
 docker run -i web-fetch-mcp
 ```
+
+## Self-Hosting via Docker Compose
+
+For running the HTTP transport on a VPS behind a reverse proxy (Caddy, Traefik, Cloudflare Tunnel, …) which terminates TLS.
+
+**Prerequisites:** Docker + Compose plugin, an existing reverse proxy attached to a shared external Docker network. Create one if you don't have it yet:
+
+```bash
+docker network create web
+```
+
+**Setup:**
+
+```bash
+cp .env.example .env
+sed -i "s/replace-me/$(openssl rand -hex 32)/" .env   # generate token
+docker compose up -d --build
+```
+
+The container exposes port `8080` only on the internal `web` network — never publish it to the host. Routes:
+
+- `GET /healthz` → `200 ok` (no auth, for health probes)
+- `POST /` → MCP streamable HTTP, requires `Authorization: Bearer <token>`
+
+**Example Caddyfile entry** (Caddy on the same `web` network):
+
+```caddy
+fetch.example.com {
+    reverse_proxy web-fetch-mcp:8080
+}
+```
+
+**Verify:**
+
+```bash
+curl -fsS https://fetch.example.com/healthz   # → ok
+curl -i -X POST https://fetch.example.com/ \
+     -H "Authorization: Bearer $WEB_FETCH_MCP_TOKEN" \
+     -H "Content-Type: application/json" \
+     -H "Accept: application/json, text/event-stream" \
+     -d '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"smoke","version":"0"}}}'
+```
+
+Logs are emitted as JSON to stderr in HTTP mode — pipe `docker compose logs` into your log aggregator if needed.
+
+To bridge a stdio-only client (like Claude Desktop) to the remote endpoint, use [`mcp-remote`](https://www.npmjs.com/package/mcp-remote).
 
 ## Architecture
 
