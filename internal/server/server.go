@@ -2,9 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/subtle"
+	"errors"
 	"fmt"
+	"log/slog"
+	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/hra42/go-web-fetch-mcp/internal/config"
 	"github.com/hra42/go-web-fetch-mcp/internal/fetcher"
@@ -131,4 +136,76 @@ func errorResult(msg string) *mcp.CallToolResult {
 // Run starts the MCP server on stdio transport, blocking until the client disconnects.
 func (s *Server) Run(ctx context.Context) error {
 	return s.mcpServer.Run(ctx, &mcp.StdioTransport{})
+}
+
+// HTTPHandler returns an http.Handler serving the MCP streamable HTTP transport,
+// wrapped in Bearer-token auth using the provided token. The token must be non-empty.
+//
+// The returned handler also exposes a GET /healthz endpoint that bypasses auth,
+// for liveness probes from reverse proxies / load balancers.
+func (s *Server) HTTPHandler(token string) (http.Handler, error) {
+	if token == "" {
+		return nil, errors.New("auth token must not be empty for HTTP transport")
+	}
+	mcpHandler := mcp.NewStreamableHTTPHandler(
+		func(*http.Request) *mcp.Server { return s.mcpServer },
+		&mcp.StreamableHTTPOptions{Logger: slog.Default()},
+	)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		_, _ = w.Write([]byte("ok"))
+	})
+	mux.Handle("/", bearerAuth(token, mcpHandler))
+	return mux, nil
+}
+
+// RunHTTP starts the MCP server on the streamable HTTP transport at addr,
+// authenticated with the given Bearer token. It blocks until ctx is cancelled
+// and then performs a graceful shutdown.
+func (s *Server) RunHTTP(ctx context.Context, addr, token string) error {
+	handler, err := s.HTTPHandler(token)
+	if err != nil {
+		return err
+	}
+
+	httpSrv := &http.Server{
+		Addr:              addr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		slog.Info("listening", "addr", addr, "transport", "http")
+		if err := httpSrv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			errCh <- err
+			return
+		}
+		errCh <- nil
+	}()
+
+	select {
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		return httpSrv.Shutdown(shutdownCtx)
+	case err := <-errCh:
+		return err
+	}
+}
+
+// bearerAuth wraps an http.Handler, requiring a matching "Authorization: Bearer <token>" header.
+func bearerAuth(token string, next http.Handler) http.Handler {
+	expected := []byte("Bearer " + token)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got := []byte(r.Header.Get("Authorization"))
+		if subtle.ConstantTimeCompare(got, expected) != 1 {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="web-fetch-mcp"`)
+			http.Error(w, "unauthorized", http.StatusUnauthorized)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }

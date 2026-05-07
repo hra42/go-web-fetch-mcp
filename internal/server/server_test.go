@@ -224,6 +224,105 @@ func TestFetchError(t *testing.T) {
 	}
 }
 
+func TestHTTPHandlerHealthz(t *testing.T) {
+	cfg := config.DefaultConfig()
+	f := fetcher.NewFetcher(cfg)
+	p := processor.NewProcessor()
+	srv := NewServer(cfg, f, p)
+
+	handler, err := srv.HTTPHandler("secret-token")
+	if err != nil {
+		t.Fatalf("HTTPHandler: %v", err)
+	}
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	// /healthz must respond 200 without an Authorization header.
+	resp, err := http.Get(ts.URL + "/healthz")
+	if err != nil {
+		t.Fatalf("Get /healthz: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		t.Errorf("/healthz status = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestHTTPHandlerRequiresToken(t *testing.T) {
+	cfg := config.DefaultConfig()
+	f := fetcher.NewFetcher(cfg)
+	p := processor.NewProcessor()
+	srv := NewServer(cfg, f, p)
+
+	if _, err := srv.HTTPHandler(""); err == nil {
+		t.Fatal("expected error for empty token")
+	}
+}
+
+func TestHTTPHandlerBearerAuth(t *testing.T) {
+	cfg := config.DefaultConfig()
+	f := fetcher.NewFetcher(cfg)
+	p := processor.NewProcessor()
+	srv := NewServer(cfg, f, p)
+
+	handler, err := srv.HTTPHandler("secret-token")
+	if err != nil {
+		t.Fatalf("HTTPHandler: %v", err)
+	}
+
+	ts := httptest.NewServer(handler)
+	defer ts.Close()
+
+	initBody := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}`)
+
+	tests := []struct {
+		name       string
+		authHeader string
+		wantStatus int
+	}{
+		{"missing header", "", http.StatusUnauthorized},
+		{"wrong token", "Bearer nope", http.StatusUnauthorized},
+		{"wrong scheme", "Basic secret-token", http.StatusUnauthorized},
+		{"correct token", "Bearer secret-token", http.StatusOK},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			body := strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"0"}}}`)
+			if tt.name == "correct token" {
+				body = initBody
+			}
+			req, err := http.NewRequest(http.MethodPost, ts.URL, body)
+			if err != nil {
+				t.Fatalf("NewRequest: %v", err)
+			}
+			req.Header.Set("Content-Type", "application/json")
+			req.Header.Set("Accept", "application/json, text/event-stream")
+			if tt.authHeader != "" {
+				req.Header.Set("Authorization", tt.authHeader)
+			}
+
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("Do: %v", err)
+			}
+			defer func() { _ = resp.Body.Close() }()
+
+			if tt.wantStatus == http.StatusUnauthorized {
+				if resp.StatusCode != http.StatusUnauthorized {
+					t.Errorf("status = %d, want 401", resp.StatusCode)
+				}
+				return
+			}
+			// For the authorized case, we just want to confirm we got past
+			// the auth middleware — any non-401 response is fine.
+			if resp.StatusCode == http.StatusUnauthorized {
+				t.Errorf("authorized request was rejected: status %d", resp.StatusCode)
+			}
+		})
+	}
+}
+
 func TestPlainTextFetch(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")

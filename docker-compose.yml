@@ -1,0 +1,19 @@
+services:
+  web-fetch-mcp:
+    build: .
+    image: web-fetch-mcp:local
+    container_name: web-fetch-mcp
+    restart: unless-stopped
+    environment:
+      WEB_FETCH_MCP_TOKEN: ${WEB_FETCH_MCP_TOKEN:?WEB_FETCH_MCP_TOKEN must be set in .env}
+    command:
+      - "--transport=http"
+      - "--listen=:8080"
+    expose:
+      - "8080"
+    networks:
+      - web
+
+networks:
+  web:
+    external: true
