@@ -1,0 +1,11 @@
+.git
+.github
+.gitignore
+.dockerignore
+bin/
+dev-plan/
+docker-compose.yml
+.env
+.env.example
+*.md
+!LICENSE
