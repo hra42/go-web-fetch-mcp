@@ -4,7 +4,7 @@ go 1.26.0
 
 require (
 	codeberg.org/readeck/go-readability/v2 v2.1.1
-	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.0
+	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.1
 	github.com/jimsmart/grobotstxt v1.0.3
 	github.com/modelcontextprotocol/go-sdk v1.6.0
 )
