@@ -6,7 +6,7 @@ require (
 	codeberg.org/readeck/go-readability/v2 v2.1.2
 	github.com/JohannesKaufmann/html-to-markdown/v2 v2.5.2
 	github.com/jimsmart/grobotstxt v1.0.3
-	github.com/modelcontextprotocol/go-sdk v1.7.0
+	github.com/modelcontextprotocol/go-sdk v1.8.0
 )
 
 require (
